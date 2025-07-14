@@ -1,193 +1,327 @@
+// Descrição: teste do jogo Termo simples
+// Requer: inputs do usuário correspondentes às tentativas de adivinhação
+// Assegura: apresentação do feedback da tentativa, sendo a palavra reescrita com cores diferentes para cada situação.
+//           Caso a letra correspondente esteja na posição correta da palavra, o programa retorna a letra em verde.
+//           Caso a letra correspondente esteja na posição errada, mas existe na palavra, o programa retorna a letra
+//           em amarelo. Caso a letra correspondente não exista na palavra, o programa retorna a letra em branco.
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
-#include <ctype.h>
+#include <unistd.h>
 #include <time.h>
+#include <termios.h>
+#include <ctype.h>
+#include <stddef.h>
 
-#define MAX_TENTATIVAS 6
+// Número de palavras no arquivo "possiveis_palavras_chave.txt"
+#define PALAVRA_CHAVE 986
 
-void registrar_vitoria(const char nome[]);
-char remove_acento(char c);
-void normalizar(char s[]);
-char* escolher_palavra_aleatoria(const char *arquivo_tema);
-void mostrar_feedback(const char tentativa[], const char palavra[]);
+// Número de tentativas máximas antes do usuário perder o jogo
+#define TENTATIVAS_MAX 6
 
+// Cores e formas no terminal
+#define GREEN "\033[32m"
+#define YELLOW "\033[33m"
+#define RED "\033[31m"
+#define MAGENTA "\033[35m"
+#define BOLD "\033[1m"
+#define ITALIC "\033[3m"
+#define RESET "\033[0m"
+
+// Verifica se a letra na posição de parâmetro corresponde com a letra na posição da palavra-chave
+bool acertou(char entrada[], int posicao, char palavra_chave[]) {
+    return (entrada[posicao] == palavra_chave[posicao]);
+}
+
+// Verifica a quantidade de vezes que a letra específica aparece na palavra > fora de posição <
+int qtde_aparece_letra(char entrada[], int posicao, char palavra_chave[]) {
+    int qtde_aparece = 0;
+    for (int i = 0; i < 5; i++) {
+        if (entrada[posicao] == palavra_chave[i] && !acertou(entrada, i, palavra_chave)) {
+                qtde_aparece++;
+        }
+    }
+    return qtde_aparece;
+}
+
+// Verifica a quantidade de vezes que a letra específica já apareceu até o momento na palavra
+int qtde_apareceu_letra(char entrada[], int posicao, char palavra_chave[]) {
+    int qtde_apareceu = 0;
+    for (int i = 0; i < posicao; i++) {
+        if (entrada[posicao] == entrada[i] && !acertou(entrada, i, palavra_chave)) {
+            qtde_apareceu++;
+        }
+    }
+    return qtde_apareceu;
+}
+
+// Verifica se o usuáŕio acertou as 5 posições
+bool venceu(char entrada[], char palavra_chave[]) {
+    int contador = 0;
+    for (int i = 0; i < 5; i++) {
+        if (acertou(entrada, i, palavra_chave)){
+            contador++;
+        }
+    }
+    return (contador == 5) && (strlen(entrada) == 5);
+}
+
+// Apaga linhas no terminal dependendo do parâmetro
+void apaga_linha(int quantidade) {
+    for (int i = 0; i < quantidade; i++) {
+        printf("\033[1A");  // Sobe uma linha
+        printf("\033[2K");  // Apaga a linha
+        printf("\r");       // Volta ao início
+    }
+}
+
+// Verifica cada letra e retorna seu estado de acordo com a palavra-chave
+void turno(char entrada[], char palavra_chave[]) {
+    apaga_linha(1);
+    for (int i = 0; i < 5; i++) {
+        if (acertou(entrada, i, palavra_chave)) {
+            printf(BOLD GREEN "%c " RESET, entrada[i]);
+        }
+        else if (qtde_aparece_letra(entrada, i, palavra_chave) > qtde_apareceu_letra(entrada, i, palavra_chave)) {
+            printf(BOLD YELLOW "%c " RESET, entrada[i]);
+        }
+        else {
+            printf(BOLD RED "%c " RESET, entrada[i]);
+        }
+    }
+    printf("     ");
+}
+
+// Verifica se a entrada do usuário é igual à uma linha do arquivo das possíveis entradas
+bool linha_igual(char entrada[], char linha[]) {
+    int contador = 0;
+    for (int i = 0; i < 5; i++) {
+        if (entrada[i] == linha[i]) {
+            contador++;
+        }
+    }
+    return contador == 5;
+}
+
+// Verifica se a entrada do usuário existe no arquivo das possiveis entradas
+bool palavra_existe(char entrada[], FILE *arquivo_entradas) {
+    char linha[7];
+
+    while (fgets(linha, sizeof linha, arquivo_entradas) != NULL) {
+        if (linha_igual(entrada, linha)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Função que desativa as entradas do usuário durante mensagens de erro para não dar conflito
+void disable_input() {
+    struct termios conf_terminal;
+    tcgetattr(STDIN_FILENO, &conf_terminal);  // Obtém configurações atuais
+    conf_terminal.c_lflag &= ~(ICANON | ECHO); // Desativa os bits de entrada e eco
+    tcsetattr(STDIN_FILENO, TCSANOW, &conf_terminal);  // Atualiza as configurações
+}
+
+// Função que reativa as entradas do usuário após a mensagem de erro
+void enable_input() {
+    struct termios conf_terminal;
+    tcgetattr(STDIN_FILENO, &conf_terminal);  // Obtém configurações atuais
+    conf_terminal.c_lflag |= (ICANON | ECHO); // Reativa os bits de entrada e eco
+    tcsetattr(STDIN_FILENO, TCSANOW, &conf_terminal);  // Atualiza as configurações
+}
+
+// Função auxiliar para remover acentos em UTF-8
+void remove_acento_utf8(char *palavra) {
+    // Mapeamento de caracteres acentuados em UTF-8 para suas versões sem acento
+    const char *acentuadas[] = {
+        "á", "à", "ã", "â", "ä", "Á", "À", "Ã", "Â", "Ä",
+        "é", "è", "ê", "ë", "É", "È", "Ê", "Ë",
+        "í", "ì", "î", "ï", "Í", "Ì", "Î", "Ï",
+        "ó", "ò", "õ", "ô", "ö", "Ó", "Ò", "Õ", "Ô", "Ö",
+        "ú", "ù", "û", "ü", "Ú", "Ù", "Û", "Ü",
+        "ç", "Ç"
+    };
+    
+    const char *sem_acentos[] = {
+        "a", "a", "a", "a", "a", "A", "A", "A", "A", "A",
+        "e", "e", "e", "e", "E", "E", "E", "E",
+        "i", "i", "i", "i", "I", "I", "I", "I",
+        "o", "o", "o", "o", "o", "O", "O", "O", "O", "O",
+        "u", "u", "u", "u", "U", "U", "U", "U",
+        "c", "C"
+    };
+
+    for (int i = 0; palavra[i]; ) {
+        bool encontrado = false;
+        
+        // Verifica se o caractere atual é um acento conhecido
+        for (int j = 0; j < sizeof(acentuadas) / sizeof(acentuadas[0]); j++) {
+            int tamanho = strlen(acentuadas[j]);  // Número de bytes do caractere acentuado
+            
+            if (strncmp(&palavra[i], acentuadas[j], tamanho) == 0) {
+                // Substitui pelo equivalente sem acento
+                palavra[i] = sem_acentos[j][0]; // Assume que sem_acentos é 1 byte
+                // Remove bytes extras dos acentos e move o restante da string para trás
+                memmove(&palavra[i+1], &palavra[i+tamanho], strlen(&palavra[i+tamanho]) + 1);
+                encontrado = true;
+                break;
+            }
+        }
+        
+        if (!encontrado) {
+            i++; // Avança para o próximo byte apenas se não houve substituição
+        }
+    }
+}
+
+void normalizar(char palavra[]) {
+    remove_acento_utf8(palavra); // Remove acentos (suporta UTF-8)
+    
+    int j = 0;
+    for (int i = 0; palavra[i]; i++) {
+        if (palavra[i] != ' ') {
+            palavra[j++] = toupper(palavra[i]);  // Retorna a letra maiúscula
+        }
+    }
+    palavra[j] = '\0';
+}
 
 int main() {
-    srand((unsigned int)time(NULL));
-    char nome1[50], nome2[50];
-    int modo = 0;
-    while (modo != 1 && modo != 2) {
-        printf("Escolha o modo de jogo:\n1- Sozinho contra a máquina\n2- Em dupla\n> ");
-        if (scanf("%d", &modo) != 1) {
-            while (getchar() != '\n'); // Limpa buffer
-            modo = 0;
+    printf(MAGENTA "Selecione o modo de jogo:\n");
+    printf("1- Termo aleatório\n2- Termo com amigos\n" RESET);
+    printf("> ");
+
+    char entrada[160];
+    char palavra_chave[6];
+    int modo;
+
+    // repetir a pergunta equanto o modo de jogo não é escolhido
+    do {
+        fgets(entrada, sizeof entrada, stdin);
+        sscanf(entrada, "%d", &modo);
+
+        // modo de jogo no qual o programa escolhe uma palavra aleatória no arquivo das possíveis palavras chaves
+        if (modo == 1) {
+            // arquivo de palavras-chave
+            FILE *arquivo_saidas = fopen("possiveis_palavras_chave.txt", "r");
+
+            if (arquivo_saidas == NULL) {
+                perror(RED "Impossível abrir arquivo" RESET);
+                return 1;
+            }
+
+            // aleatorieade de acordo com a hora
+            srand(time(NULL));
+
+            // pular para a linha aleatória
+            fseek(arquivo_saidas, (rand() % PALAVRA_CHAVE) * 6, SEEK_SET);
+
+            // leia a linha aleatória
+            fgets(palavra_chave, sizeof palavra_chave, arquivo_saidas);
+
+            fclose(arquivo_saidas);
         }
-        getchar();
-    }
-
-    if (modo == 1) {
-        printf("Digite seu nome: ");
-        fgets(nome1, sizeof nome1, stdin);
-        nome1[strcspn(nome1, "\n")] = '\0';
-    } else {
-        printf("Digite o nome do Jogador 1 (quem adivinha): ");
-        fgets(nome1, sizeof nome1, stdin);
-        nome1[strcspn(nome1, "\n")] = '\0';
-        printf("Digite o nome do Jogador 2 (quem escolhe a palavra): ");
-        fgets(nome2, sizeof nome2, stdin);
-        nome2[strcspn(nome2, "\n")] = '\0';
-    }
-
-    printf("Escolha um tema:\n1- Paises\n2- Comidas\n3- Objetos\n4- Filmes/Séries\n> ");
-    int tema = 0;
-    while (tema < 1 || tema > 4) {
-        if (scanf("%d", &tema) != 1) {
-            while (getchar() != '\n');
-            tema = 0;
+        // modo de jogo no qual o usuário seleciona a palavra-chave para que outro usuário adivinhe
+        else if (modo == 2) {
+            do {
+                printf(MAGENTA "Digite a palavra para seu amigo adivinhar: " RESET);
+                fgets(entrada, sizeof entrada, stdin);
+                entrada[strlen(entrada) - 1] = '\0';  // substitui o '\n' por um '\0'
+                normalizar(entrada);
+                
+                if (strlen(entrada) > 5) {
+                    printf(RED "Erro: palavra muito longa!\n" RESET);
+                    disable_input();
+                    sleep(2);
+                    enable_input();
+                    apaga_linha(2);
+                }
+                else if (strlen(entrada) < 5) {
+                    printf(RED "Erro: palavra muito curta!\n" RESET);
+                    disable_input();
+                    sleep(2);
+                    enable_input();
+                    apaga_linha(2);
+                }
+                else {
+                    disable_input();
+                    // copia a entrada do usuário para a palavra chave
+                    for(int i = 0; i < 5; i++) {
+                        palavra_chave[i] = entrada[i];
+                    }
+                    sleep(1);
+                    enable_input();
+                    apaga_linha(1);
+                }
+            } while (strlen(entrada) != 5);
         }
-        getchar();
-    }
+        // caso outra entrada que não '1' ou '2'
+        else {
+            disable_input();
+            printf(RED "Erro: digite apenas '1' ou '2' para escolher o modo de jogo\n" RESET);
+            sleep(2);
 
-    char arquivo_tema[100];
-    if (tema == 1) strcpy(arquivo_tema, "paises.txt");
-    else if (tema == 2) strcpy(arquivo_tema, "comidas.txt");
-    else if (tema == 3) strcpy(arquivo_tema, "objetos.txt");
-    else strcpy(arquivo_tema, "filmes_series.txt");
+            apaga_linha(2);
+            printf("> ");
 
-    char palavra[100];
-    if (modo == 1) {
-        strcpy(palavra, escolher_palavra_aleatoria(arquivo_tema));
-    } else {
-        printf("%s, digite a palavra dentro do tema: ", nome2);
-        fgets(palavra, sizeof palavra, stdin);
-        palavra[strcspn(palavra, "\n")] = '\0';
-        printf("\033[1A\033[2K\r");
-    }
-
-    normalizar(palavra);
-    int tentativas = MAX_TENTATIVAS;
-    int acertou = 0;
-    while (tentativas > 0 && !acertou) {
-        char tentativa[100];
-        printf("\n%s, digite uma palavra com %zu letras (desconsidere espaços): ", nome1, strlen(palavra));
-        fgets(tentativa, sizeof tentativa, stdin);
-        tentativa[strcspn(tentativa, "\n")] = '\0';
-        normalizar(tentativa);
-        if (strlen(tentativa) != strlen(palavra)) {
-            printf("A palavra deve ter %zu letras!\n", strlen(palavra));
-            continue;
-        }
-        mostrar_feedback(tentativa, palavra);
-        if (strcmp(tentativa, palavra) == 0) {
-            acertou = 1;
-        } else {
-            tentativas--;
-            printf("Tentativas restantes: %d\n", tentativas);
+            enable_input();
         }
     }
+    while (modo != 1 && modo != 2);
 
-    if (acertou) {
-        printf("Parabéns! Você acertou!\n");
-        registrar_vitoria(nome1);
-    } else {
-        printf("Que pena! A palavra era: %s\n", palavra);
-        if (modo == 2) registrar_vitoria(nome2);
+    FILE *arquivo_entradas = fopen("possiveis_entradas_usuario.txt", "r");
+
+    if (arquivo_entradas == NULL) {
+        perror(RED "Impossível abrir arquivo" RESET);
+        return 1;
     }
 
-    printf("Pressione ENTER para sair...\n");
-    getchar();
+    printf("\n");
+    printf("Digite uma palavra:\n");
+
+    int tentativas = 0;
+    do {
+        fgets(entrada, sizeof entrada, stdin);
+        entrada[strlen(entrada) - 1] = '\0';  // substitui o '\n' por um '\0'
+        normalizar(entrada);
+        
+        if (strlen(entrada) == 5 && ( palavra_existe(entrada, arquivo_entradas) || modo == 2 )) {
+            turno(entrada, palavra_chave);
+            tentativas++;
+            if (!venceu(entrada, palavra_chave)) {
+                printf("Tentativas restantes: %d\n", TENTATIVAS_MAX - tentativas);
+            }
+            // reposicionar o ponteiro para ler a primeira linha do arquivo novamente
+            rewind(arquivo_entradas);
+        }
+        else {
+            disable_input();
+            printf(RED "Palavra inválida!\n" RESET);
+
+            sleep(1);
+
+            apaga_linha(2);
+
+            enable_input();
+            
+            // reposicionar o ponteiro para ler a primeira linha do arquivo novamente
+            rewind(arquivo_entradas);
+        }
+    }
+    while (venceu(entrada, palavra_chave) == false && tentativas != TENTATIVAS_MAX);
+
+    fclose(arquivo_entradas);
+
+    if (venceu(entrada, palavra_chave) == true) {
+        printf(ITALIC MAGENTA "\nParabéns!!! Você acertou!!!\n" RESET);
+    }
+    else {
+        printf(ITALIC MAGENTA "\nQue pena, você perdeu!\nA palavra era %s\n\n", palavra_chave);
+    }
 
     return 0;
 }
-
-void registrar_vitoria(const char nome[]) {
-    FILE *f = fopen("ranking.txt", "a");
-    if (f) {
-        fprintf(f, "%s\n", nome);
-        fclose(f);
-    }
-}
-
-char remove_acento(char c) {
-    const char *acentos = "áàãâäÁÀÃÂÄéèêëÉÈÊËíìîïÍÌÎÏóòõôöÓÒÕÔÖúùûüÚÙÛÜçÇ";
-    const char *sem_acentos = "aaaaaAAAAAeeeeEEEEiiiiIIIIoooooOOOOOuuuuUUUUcC";
-    char *p = strchr(acentos, c);
-    if (p) {
-        return sem_acentos[p - acentos];
-    }
-    return c;
-}
-
-void normalizar(char s[]) {
-    int j = 0;
-    for (int i = 0; s[i]; i++) {
-        if (s[i] != ' ') {
-            s[j++] = toupper((unsigned char)remove_acento(s[i]));
-        }
-    }
-    s[j] = '\0';
-}
-
-char* escolher_palavra_aleatoria(const char *arquivo_tema) {
-    static char palavra[100];
-    FILE *f = fopen(arquivo_tema, "r");
-    if (!f) {
-        printf("Erro ao abrir o arquivo %s\n", arquivo_tema);
-        exit(1);
-    }
-    char palavras[100][100];
-    int total = 0;
-    while (fgets(palavras[total], sizeof palavras[0], f)) {
-        palavras[total][strcspn(palavras[total], "\n")] = '\0';
-        total++;
-        if (total >= 100) break; // Evita overflow
-    }
-    fclose(f);
-    if (total == 0) {
-        printf("Arquivo %s está vazio!\n", arquivo_tema);
-        exit(1);
-    }
-    strcpy(palavra, palavras[rand() % total]);
-    return palavra;
-}
-
-void mostrar_feedback(const char tentativa[], const char palavra[]) {
-    int tam = (int)strlen(palavra);
-    int verde[100] = {0};
-    int usada[100] = {0};
-
-    // Marca verdes
-    for (int i = 0; i < tam; i++) {
-        if (tentativa[i] == palavra[i]) {
-            verde[i] = 1;
-            usada[i] = 1;
-        }
-    }
-
-    // Mostra feedback
-    for (int i = 0; i < tam; i++) {
-        if (verde[i]) {
-            printf("\033[1;32m%c\033[0m ", tentativa[i]);
-        } else {
-            int amarelo = 0;
-            for (int j = 0; j < tam; j++) {
-                if (!usada[j] && tentativa[i] == palavra[j] && tentativa[j] != palavra[j] && !amarelo) {
-                    amarelo = 1;
-                    usada[j] = 1;
-                }
-            }
-            if (amarelo) {
-                printf("\033[1;33m%c\033[0m ", tentativa[i]);
-            } else {
-                printf("%c ", tentativa[i]);
-            }
-        }
-    }
-    printf("\n");
-}
-
-
-
-
-
